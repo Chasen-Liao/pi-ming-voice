@@ -1,0 +1,49 @@
+{
+  "name": "pi-ming-voice",
+  "version": "0.1.0",
+  "description": "Pi voice input using Ant Ling Ming-3.0-asr-tiny",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Chasen-Liao/pi-ming-voice.git"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "voice",
+    "ming",
+    "ant-ling"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": [
+    "src/ming.mjs",
+    "bin",
+    "docs/USAGE.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "bin": {
+    "ming-voice": "./bin/ming-voice.mjs"
+  },
+  "pi": {
+    "extensions": [
+      "./src/ming.mjs"
+    ]
+  },
+  "scripts": {
+    "key": "node ./bin/ming-voice.mjs key",
+    "login": "node ./bin/ming-voice.mjs login",
+    "test": "node --experimental-strip-types --test test/*.test.mjs"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "dependencies": {
+    "jiti": "^2.6.1",
+    "pi-voice-stt": "0.8.0"
+  }
+}
