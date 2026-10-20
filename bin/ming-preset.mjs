@@ -1,10 +1,15 @@
-import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync, existsSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 export const MING_ENDPOINT = "https://api.ant-ling.com/v1/audio/transcriptions";
 export const MING_MODEL = "Ming-3.0-asr-tiny";
+export const KEY_ENV_NAME = "ANTLING_API_KEY";
+/** 百灵单段音频限制 30 秒，留 2 秒余量。 */
+export const DEFAULT_MAX_SECONDS = 28;
+/** 上传 + 端点转写共用一个超时，28 秒音频留足余量。 */
+export const DEFAULT_TIMEOUT_SECONDS = 90;
 
 export function defaultAgentDir() {
   return join(homedir(), ".pi", "agent");
@@ -33,18 +38,19 @@ export function mingConfig(keyPath) {
       ...platformCapture(),
       sampleRate: 16000,
       channels: 1,
-      maxSeconds: 28,
+      maxSeconds: DEFAULT_MAX_SECONDS,
     },
     provider: {
       type: "openai-compatible",
       endpoint: MING_ENDPOINT,
       model: MING_MODEL,
       language: "",
-      timeoutSeconds: 30,
+      timeoutSeconds: DEFAULT_TIMEOUT_SECONDS,
       responseFormat: "json",
-      apiKeyEnv: "ANTLING_API_KEY",
+      apiKeyEnv: KEY_ENV_NAME,
       apiKeyFile: keyPath,
     },
+    // 上游 cleanup 是「AI 文本润色」开关，不是临时文件清理。关掉它，识别文本不会外发到第三方。
     cleanup: { enabled: false },
   };
 }
@@ -56,6 +62,30 @@ function isObject(value) {
 export function isPlaceholderInput(input) {
   const value = typeof input === "string" ? input.trim() : "";
   return value === "" || value === "audio=Microphone" || value === "Microphone";
+}
+
+/**
+ * 解析令牌文件内容，语义与上游 pi-voice-stt 的 secrets/resolve-api-key.ts 保持一致：
+ * - 纯文本（不含 "="）直接当作令牌
+ * - 含 "=" 时按 env 文件解析，取 ANTLING_API_KEY=... 那一行
+ * 该文件不在本仓库内，两处逻辑必须同步修改。
+ */
+export function parseApiKeyContents(contents, envName = KEY_ENV_NAME) {
+  const raw = String(contents ?? "").trim();
+  if (!raw) return "";
+  if (!raw.includes("=")) return raw;
+  for (const line of raw.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const normalized = trimmed.startsWith("export ") ? trimmed.slice("export ".length).trim() : trimmed;
+    const separator = normalized.indexOf("=");
+    if (separator === -1) continue;
+    if (normalized.slice(0, separator).trim() !== envName) continue;
+    const value = normalized.slice(separator + 1).trim();
+    const quoted = /^(['"])([\s\S]*)\1$/.exec(value);
+    return quoted ? quoted[2].trim() : value;
+  }
+  return "";
 }
 
 /** Parse FFmpeg DirectShow listing. FFmpeg 8 uses [in#0 @ addr] "name" (audio). */
@@ -81,12 +111,37 @@ export function chooseWindowsInput(devices) {
   return `audio=${preferred ?? devices[0]}`;
 }
 
+/** List DirectShow audio devices. Never rejects: an unavailable ffmpeg yields an empty list. */
 export function listWindowsAudioDevices(ffmpegPath = "ffmpeg") {
-  const result = spawnSync(ffmpegPath, [
-    "-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy",
-  ], { encoding: "utf8", windowsHide: true, timeout: 8_000 });
-  if (result.error) return [];
-  return parseDshowAudioDevices(`${result.stdout ?? ""}\n${result.stderr ?? ""}`);
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(ffmpegPath, ["-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"], {
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch {
+      resolve([]);
+      return;
+    }
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      try { child.kill("SIGKILL"); } catch { /* already gone */ }
+    }, 8_000);
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk) => { stdout += chunk; });
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk) => { stderr += chunk; });
+    child.on("error", () => {
+      clearTimeout(timer);
+      resolve([]);
+    });
+    child.on("close", () => {
+      clearTimeout(timer);
+      resolve(parseDshowAudioDevices(`${stdout}\n${stderr}`));
+    });
+  });
 }
 
 function resolveInput(capture, fallback, detectedInput) {
@@ -99,18 +154,23 @@ export function mergeMingConfig(existing, keyPath, options = {}) {
   const base = mingConfig(keyPath);
   const current = isObject(existing) ? existing : {};
   const capture = isObject(current.capture) ? current.capture : {};
-  const maxSeconds = Number.isInteger(capture.maxSeconds) && capture.maxSeconds >= 1 && capture.maxSeconds <= 28
+  const currentProvider = isObject(current.provider) ? current.provider : {};
+  const maxSeconds = Number.isInteger(capture.maxSeconds) && capture.maxSeconds >= 1 && capture.maxSeconds <= DEFAULT_MAX_SECONDS
     ? capture.maxSeconds
-    : 28;
+    : DEFAULT_MAX_SECONDS;
+  // 60 秒以上才当作用户自己调过；更小的值（含旧版默认的 30）统一抬到 DEFAULT_TIMEOUT_SECONDS。
+  const timeoutSeconds = Number.isInteger(currentProvider.timeoutSeconds) && currentProvider.timeoutSeconds >= 60
+    ? currentProvider.timeoutSeconds
+    : DEFAULT_TIMEOUT_SECONDS;
   const provider = {
-    ...(isObject(current.provider) ? current.provider : {}),
+    ...currentProvider,
     type: "openai-compatible",
     endpoint: MING_ENDPOINT,
     model: MING_MODEL,
     language: "",
-    timeoutSeconds: 30,
+    timeoutSeconds,
     responseFormat: "json",
-    apiKeyEnv: "ANTLING_API_KEY",
+    apiKeyEnv: KEY_ENV_NAME,
     apiKeyFile: keyPath,
   };
   delete provider.apiKey;
@@ -129,35 +189,74 @@ export function mergeMingConfig(existing, keyPath, options = {}) {
   };
 }
 
-export function ensureMingConfig(agentDir = defaultAgentDir(), options = {}) {
+export async function ensureMingConfig(agentDir = defaultAgentDir(), options = {}) {
   const paths = agentPaths(agentDir);
   mkdirSync(paths.dir, { recursive: true });
   let existing = {};
   if (existsSync(paths.configPath)) {
-    existing = JSON.parse(readFileSync(paths.configPath, "utf8"));
+    try {
+      const parsed = JSON.parse(readFileSync(paths.configPath, "utf8"));
+      existing = isObject(parsed) ? parsed : {};
+    } catch {
+      // A broken config must not take the whole extension down: keep a copy and fall back to defaults.
+      const backup = `${paths.configPath}.broken-${Date.now()}`;
+      try { renameSync(paths.configPath, backup); } catch { /* best effort */ }
+      existing = {};
+    }
   }
-  const ffmpegPath = isObject(existing.capture) && typeof existing.capture.ffmpegPath === "string"
-    ? existing.capture.ffmpegPath
+  const capture = isObject(existing.capture) ? existing.capture : {};
+  const ffmpegPath = typeof capture.ffmpegPath === "string" && capture.ffmpegPath.trim()
+    ? capture.ffmpegPath
     : "ffmpeg";
-  const detectedInput = options.detectedInput
-    ?? (process.platform === "win32" ? chooseWindowsInput(listWindowsAudioDevices(ffmpegPath)) : undefined);
+  let detectedInput = options.detectedInput;
+  // Only probe devices while the configured input is still the placeholder, so a
+  // resolved device never costs another ffmpeg spawn on every Pi start.
+  if (!detectedInput && process.platform === "win32" && isPlaceholderInput(capture.input)) {
+    const listDevices = options.listDevices ?? listWindowsAudioDevices;
+    detectedInput = chooseWindowsInput(await listDevices(ffmpegPath));
+  }
   const next = mergeMingConfig(existing, paths.keyPath, { detectedInput });
   writeFileSync(paths.configPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
   return paths;
 }
 
-export function writeApiKey(agentDir, key) {
+/** Read the current config without writing anything. */
+export function readMingConfig(agentDir = defaultAgentDir()) {
+  const paths = agentPaths(agentDir);
+  if (!existsSync(paths.configPath)) return { paths, config: null, broken: false };
+  try {
+    const parsed = JSON.parse(readFileSync(paths.configPath, "utf8"));
+    return { paths, config: isObject(parsed) ? parsed : null, broken: false };
+  } catch {
+    return { paths, config: null, broken: true };
+  }
+}
+
+/** Read the token the way pi-voice-stt will read it, so status never lies about it. */
+export function readApiKey(agentDir = defaultAgentDir()) {
+  const { keyPath } = agentPaths(agentDir);
+  if (!existsSync(keyPath)) return "";
+  try {
+    return parseApiKeyContents(readFileSync(keyPath, "utf8"), KEY_ENV_NAME);
+  } catch {
+    return "";
+  }
+}
+
+export function hasApiKeyFile(agentDir = defaultAgentDir()) {
+  return readApiKey(agentDir).length > 0;
+}
+
+/**
+ * Store the token as an env-style entry. A bare token containing "=" would be
+ * parsed as an env file by pi-voice-stt and resolve to an empty key.
+ */
+export async function writeApiKey(agentDir, key, options = {}) {
   const trimmed = key.trim();
   if (!trimmed || /[\r\n]/.test(key)) {
     throw new Error("API key 不能为空，也不能包含换行");
   }
-  const paths = ensureMingConfig(agentDir);
-  writeFileSync(paths.keyPath, `${trimmed}\n`, { encoding: "utf8", mode: 0o600 });
+  const paths = await ensureMingConfig(agentDir, options);
+  writeFileSync(paths.keyPath, `${KEY_ENV_NAME}=${trimmed}\n`, { encoding: "utf8", mode: 0o600 });
   return paths;
-}
-
-export function hasApiKeyFile(agentDir = defaultAgentDir()) {
-  const { keyPath } = agentPaths(agentDir);
-  if (!existsSync(keyPath)) return false;
-  return readFileSync(keyPath, "utf8").trim().length > 0;
 }

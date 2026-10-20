@@ -6,7 +6,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Chasen-Liao/pi-ming-voice.git"
+    "url": "git+https://github.com/Chasen-Liao/pi-ming-voice.git",
+    "directory": "."
+  },
+  "homepage": "https://github.com/Chasen-Liao/pi-ming-voice#readme",
+  "bugs": {
+    "url": "https://github.com/Chasen-Liao/pi-ming-voice/issues"
   },
   "keywords": [
     "pi-package",
@@ -19,7 +24,7 @@
     "node": ">=22.19.0"
   },
   "files": [
-    "src/ming.mjs",
+    "src/ming.ts",
     "bin",
     "docs/USAGE.md",
     "README.md",
@@ -30,20 +35,20 @@
   },
   "pi": {
     "extensions": [
-      "./src/ming.mjs"
+      "./src/ming.ts"
     ]
   },
   "scripts": {
     "key": "node ./bin/ming-voice.mjs key",
     "login": "node ./bin/ming-voice.mjs login",
-    "test": "node --experimental-strip-types --test test/*.test.mjs"
+    "test": "node --test \"test/*.test.mjs\"",
+    "prepublishOnly": "npm test"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
   },
   "dependencies": {
-    "jiti": "^2.6.1",
     "pi-voice-stt": "0.8.0"
   }
 }

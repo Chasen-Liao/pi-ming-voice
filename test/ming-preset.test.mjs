@@ -1,17 +1,22 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
   chooseWindowsInput,
   ensureMingConfig,
+  hasApiKeyFile,
   MING_ENDPOINT,
   MING_MODEL,
   mergeMingConfig,
+  parseApiKeyContents,
   parseDshowAudioDevices,
+  readApiKey,
   writeApiKey,
 } from "../bin/ming-preset.mjs";
+
+const detected = { detectedInput: "audio=本机麦克风" };
 
 test("merge keeps a chosen device and forces the Ming endpoint", () => {
   const merged = mergeMingConfig({
@@ -24,12 +29,19 @@ test("merge keeps a chosen device and forces the Ming endpoint", () => {
   assert.equal(merged.provider.language, "");
   assert.equal("apiKey" in merged.provider, false);
   assert.equal(merged.capture.input, "audio=本机麦克风");
-  const detected = mergeMingConfig({
+  const detectedMerge = mergeMingConfig({
     capture: { input: "audio=Microphone" },
   }, "C:/keys/antling-api-key", { detectedInput: "audio=本机麦克风" });
-  assert.equal(detected.capture.input, "audio=本机麦克风");
+  assert.equal(detectedMerge.capture.input, "audio=本机麦克风");
   assert.equal(merged.capture.maxSeconds, 28);
   assert.equal(JSON.stringify(merged).includes("secret-value"), false);
+});
+
+test("request timeout defaults to 90s, keeps a large user value and migrates the old 30s default", () => {
+  assert.equal(mergeMingConfig({}, "C:/keys/antling-api-key").provider.timeoutSeconds, 90);
+  assert.equal(mergeMingConfig({ provider: { timeoutSeconds: 150 } }, "C:/keys/antling-api-key").provider.timeoutSeconds, 150);
+  assert.equal(mergeMingConfig({ provider: { timeoutSeconds: 30 } }, "C:/keys/antling-api-key").provider.timeoutSeconds, 90);
+  assert.equal(mergeMingConfig({ provider: { timeoutSeconds: 3 } }, "C:/keys/antling-api-key").provider.timeoutSeconds, 90);
 });
 
 test("FFmpeg 8 device listing prefers a microphone over video devices", () => {
@@ -47,16 +59,97 @@ test("FFmpeg 8 device listing prefers a microphone over video devices", () => {
 test("key file is written outside the supplied directory contents of the config", async () => {
   const dir = await mkdtemp(join(tmpdir(), "ming-voice-"));
   try {
-    const paths = writeApiKey(dir, "test-key-value");
+    const paths = await writeApiKey(dir, "test-key-value", detected);
     assert.equal(paths.dir, dir);
     const key = await readFile(paths.keyPath, "utf8");
     const config = await readFile(paths.configPath, "utf8");
-    assert.equal(key.trim(), "test-key-value");
+    assert.equal(key.trim(), "ANTLING_API_KEY=test-key-value");
     assert.equal(config.includes("test-key-value"), false);
     assert.equal(config.includes(MING_ENDPOINT), true);
-    const again = ensureMingConfig(dir);
+    const again = await ensureMingConfig(dir, detected);
     const kept = JSON.parse(await readFile(again.configPath, "utf8"));
     assert.equal(kept.provider.endpoint, MING_ENDPOINT);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a token containing '=' survives a write/read round trip", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ming-voice-"));
+  try {
+    const paths = await writeApiKey(dir, "sk-abc==", detected);
+    assert.equal((await readFile(paths.keyPath, "utf8")).trim(), "ANTLING_API_KEY=sk-abc==");
+    assert.equal(readApiKey(dir), "sk-abc==");
+    assert.equal(hasApiKeyFile(dir), true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("token files are parsed like pi-voice-stt parses them", () => {
+  assert.equal(parseApiKeyContents("sk-plain"), "sk-plain");
+  assert.equal(parseApiKeyContents("ANTLING_API_KEY=sk-env"), "sk-env");
+  assert.equal(parseApiKeyContents("# note\nANTLING_API_KEY=sk-env\n"), "sk-env");
+  assert.equal(parseApiKeyContents('ANTLING_API_KEY="sk-quoted"'), "sk-quoted");
+  assert.equal(parseApiKeyContents(""), "");
+});
+
+test("a bare token file containing '=' is reported as unusable, not as filled", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ming-voice-"));
+  try {
+    await writeFile(join(dir, "antling-api-key"), "sk-abc==\n", "utf8");
+    assert.equal(readApiKey(dir), "");
+    assert.equal(hasApiKeyFile(dir), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a broken config file is backed up instead of breaking the extension", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ming-voice-"));
+  try {
+    await writeFile(join(dir, "ming-voice-stt.json"), '{ "capture": { "input": "audio=X" ', "utf8");
+    const paths = await ensureMingConfig(dir, detected);
+    const config = JSON.parse(await readFile(paths.configPath, "utf8"));
+    assert.equal(config.capture.input, "audio=本机麦克风");
+    const backups = (await readdir(dir)).filter((name) => name.includes(".broken-"));
+    assert.equal(backups.length, 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a resolved device is not re-detected on later starts", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ming-voice-"));
+  try {
+    let scans = 0;
+    const listDevices = async () => {
+      scans += 1;
+      return ["别的麦克风"];
+    };
+    await ensureMingConfig(dir, { listDevices, detectedInput: "audio=本机麦克风" });
+    assert.equal(scans, 0);
+    await ensureMingConfig(dir, { listDevices });
+    assert.equal(scans, 0, "设备已确定，不应再次扫描");
+    const config = JSON.parse(await readFile(join(dir, "ming-voice-stt.json"), "utf8"));
+    assert.equal(config.capture.input, "audio=本机麦克风");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a placeholder device is detected on Windows", { skip: process.platform !== "win32" }, async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ming-voice-"));
+  try {
+    let scans = 0;
+    const listDevices = async () => {
+      scans += 1;
+      return ["备用麦克风"];
+    };
+    await ensureMingConfig(dir, { listDevices });
+    assert.equal(scans, 1);
+    const config = JSON.parse(await readFile(join(dir, "ming-voice-stt.json"), "utf8"));
+    assert.equal(config.capture.input, "audio=备用麦克风");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

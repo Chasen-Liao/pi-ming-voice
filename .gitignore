@@ -18,3 +18,5 @@ artifacts/local/
 *.m4a
 *.webm
 *.zip
+*.tgz
+npm-auth-url.txt

@@ -1,10 +1,25 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { stdin, stdout } from "node:process";
-import { defaultAgentDir, ensureMingConfig, hasApiKeyFile, MING_ENDPOINT, MING_MODEL, writeApiKey } from "./ming-preset.mjs";
+import {
+  defaultAgentDir,
+  hasApiKeyFile,
+  MING_ENDPOINT,
+  MING_MODEL,
+  readApiKey,
+  readMingConfig,
+  writeApiKey,
+} from "./ming-preset.mjs";
 
 const consoleUrl = "https://chat.ant-ling.com/open";
 const billingUrl = "https://feecenter.cloud.alipay.com/console/feeMain";
+
+/** Strip one layer of matching quotes, so a token pasted from a web page still works. */
+function unquote(value) {
+  const trimmed = value.trim();
+  const quoted = /^(['"])([\s\S]*)\1$/.exec(trimmed);
+  return quoted ? quoted[2].trim() : trimmed;
+}
 
 function readSecret(prompt) {
   return new Promise((resolve, reject) => {
@@ -33,7 +48,7 @@ function readSecret(prompt) {
       if (text === "\r" || text === "\n") {
         stop();
         stdout.write("\n");
-        resolve(value);
+        resolve(unquote(value));
         return;
       }
       if (text === "\u007f" || text === "\b") {
@@ -56,19 +71,31 @@ function openBrowser(url) {
 
 async function savePastedKey() {
   const key = await readSecret("把控制台里新建的令牌贴到这里（输入不回显）：");
-  const paths = writeApiKey(defaultAgentDir(), key);
+  const paths = await writeApiKey(defaultAgentDir(), key);
   console.log(`已保存到 ${paths.keyPath}`);
   console.log(`Pi 配置：${paths.configPath}`);
   console.log("令牌不会从百灵页面自动返回。Ctrl+R 开始录音，再按一次插入文字。");
 }
 
+/** Read-only report: never rewrites the config and never spawns ffmpeg. */
 function printStatus() {
-  const paths = ensureMingConfig();
+  const { paths, config, broken } = readMingConfig();
   console.log(`识别端点：${MING_ENDPOINT}`);
   console.log(`模型：${MING_MODEL}`);
-  console.log(`配置：${paths.configPath}`);
-  console.log(`API key 文件：${hasApiKeyFile() ? "已填写" : "还没有"}（${paths.keyPath}）`);
+  console.log(`配置文件：${paths.configPath}${broken ? "（内容损坏，需要修复）" : config ? "" : "（还没有生成）"}`);
+  if (config) {
+    const capture = config.capture ?? {};
+    const provider = config.provider ?? {};
+    console.log(`录音设备：${capture.input ?? "未设置"}（${capture.inputFormat ?? "?"}，ffmpeg: ${capture.ffmpegPath ?? "?"}）`);
+    console.log(`单段上限：${capture.maxSeconds ?? "?"} 秒 · 请求超时：${provider.timeoutSeconds ?? "?"} 秒`);
+    console.log(`快捷键：${config.keybind ?? "ctrl+r"} · 模型：${provider.model ?? MING_MODEL}`);
+  }
+  const key = readApiKey();
+  console.log(`API key：${key ? "已填写" : hasApiKeyFile() ? "无法解析" : "还没有"}（${paths.keyPath}）`);
   console.log("key 不会写进仓库，也不会在这里显示。");
+  if (config && !key) {
+    console.log("提示：key 缺失或无法解析时录音会报缺少 API key，可运行 npx ming-voice key 重新填写。");
+  }
 }
 
 const command = process.argv[2] ?? "help";
@@ -87,7 +114,7 @@ if (command === "status") {
   console.log(`用法：
   ming-voice login    打开百灵控制台，再贴回新建的令牌
   ming-voice key      只贴令牌，不打开浏览器
-  ming-voice status   查看端点和 key 是否已填写
+  ming-voice status   查看端点、设备和 key 是否可用（只读）
 
 识别请求发往 ${MING_ENDPOINT}，模型 ${MING_MODEL}。
 进程环境里的 ANTLING_API_KEY 仍然优先于 key 文件。`);
