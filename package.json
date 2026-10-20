@@ -26,7 +26,7 @@
     "LICENSE"
   ],
   "bin": {
-    "ming-voice": "./bin/ming-voice.mjs"
+    "ming-voice": "bin/ming-voice.mjs"
   },
   "pi": {
     "extensions": [
