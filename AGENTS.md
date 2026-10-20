@@ -12,3 +12,10 @@
 - `bin/ming-preset.mjs` 里的令牌解析逻辑必须与 pi-voice-stt 的 `secrets/resolve-api-key.ts` 保持一致。
 - 配置解析失败不能让扩展加载失败，坏文件备份后回退默认值。
 - 未实测的行为不要写成已经跑通。
+
+## 发布
+
+- 只支持通过 `pi install` 安装。Pi 装包时用 `--legacy-peer-deps`，peer 由 Pi 运行时提供，不要把 `@earendil-works/*` 挪进 `dependencies`。
+- npm 12 对首次发布的包会先建一个 `0.0.0-stage` 占位版本，真实版本要 maintainer 用 2FA 批准后才可用；`npm stage list` 看不到它。
+- `npm publish` 需要 TTY。npm 的 otplease 在非交互环境直接抛 EOTP，脚本里跑要用能弹浏览器的方式（例如在独立控制台窗口里执行）。
+- 发布前跑 `npm publish --dry-run` 确认 tarball 文件清单。
