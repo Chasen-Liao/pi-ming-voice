@@ -17,6 +17,16 @@ npx ming-voice login
 
 进程环境里的 `ANTLING_API_KEY` 优先于令牌文件。
 
+## FFmpeg
+
+录音需要 FFmpeg。插件按这个顺序选：
+
+1. 配置里手写的 `capture.ffmpegPath`
+2. 系统 PATH 里的 `ffmpeg`
+3. 随包安装的二进制（`@ffmpeg-installer/*`，按平台只装对应的一个）
+
+所以不装 FFmpeg 也能直接用，不需要额外下载。
+
 ## 录音
 
 | 操作 | 作用 |

@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  bundledFfmpegPath,
   chooseWindowsInput,
   ensureMingConfig,
+  ffmpegAvailable,
   hasApiKeyFile,
   MING_ENDPOINT,
   MING_MODEL,
@@ -13,6 +16,7 @@ import {
   parseApiKeyContents,
   parseDshowAudioDevices,
   readApiKey,
+  resolveFfmpegPath,
   writeApiKey,
 } from "../bin/ming-preset.mjs";
 
@@ -150,6 +154,44 @@ test("a placeholder device is detected on Windows", { skip: process.platform !==
     assert.equal(scans, 1);
     const config = JSON.parse(await readFile(join(dir, "ming-voice-stt.json"), "utf8"));
     assert.equal(config.capture.input, "audio=备用麦克风");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("ffmpeg falls back to the bundled binary when the system has none", async () => {
+  const savedPath = process.env.PATH;
+  try {
+    process.env.PATH = join(tmpdir(), "ming-voice-no-ffmpeg");
+    assert.equal(await ffmpegAvailable(), false);
+    const chosen = await resolveFfmpegPath(undefined);
+    const bundled = bundledFfmpegPath();
+    if (bundled) {
+      assert.equal(chosen, bundled);
+      assert.equal(existsSync(chosen), true);
+    } else {
+      assert.equal(chosen, "ffmpeg");
+    }
+  } finally {
+    process.env.PATH = savedPath;
+  }
+});
+
+test("an explicitly configured ffmpeg path wins over the bundled one", async () => {
+  const bundled = bundledFfmpegPath();
+  if (!bundled) return;
+  assert.equal(await resolveFfmpegPath(bundled), bundled);
+  assert.equal(await resolveFfmpegPath(join(tmpdir(), "ming-voice-missing-ffmpeg")), "ffmpeg");
+});
+
+test("the resolved ffmpeg path is written into the config", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ming-voice-"));
+  try {
+    const expected = await resolveFfmpegPath(undefined);
+    await ensureMingConfig(dir, { detectedInput: "audio=本机麦克风" });
+    const config = JSON.parse(await readFile(join(dir, "ming-voice-stt.json"), "utf8"));
+    assert.equal(config.capture.ffmpegPath, expected);
+    assert.ok(config.capture.ffmpegPath.length > 0);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

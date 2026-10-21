@@ -14,7 +14,7 @@ pi install npm:pi-ming-voice
 pi install <你的仓库路径>
 ```
 
-需要本机已有 FFmpeg，以及 Node ≥ 22.19。插件不会下载或安装它们。
+需要 Node ≥ 22.19。录音用的 FFmpeg 优先用系统里已装的那个；系统没有时插件会用自己的随包二进制，不需要另外下载（只下载你当前平台的那一份，约 25 MB）。令牌仍然需要你自己去百灵控制台创建。
 
 > 请通过 `pi install` 安装。Pi 装扩展包时会跳过 peerDependencies，`@earendil-works/*` 由 Pi 自己在运行时提供；用普通 `npm i` 安装会得到另一份副本的 Pi 运行时包。
 
@@ -60,4 +60,6 @@ Windows 上如果设备名仍是占位的 `audio=Microphone`，加载时会用 F
 
 2026-10-21 在 Windows 11、Pi 1.3.0、FFmpeg 8.1.1 的交互式 Pi 里实测通过：`Ctrl+R` 录音 → 百灵识别 → 文字插入输入框，链路正常。识别请求已确认为发往 `https://api.ant-ling.com/v1/audio/transcriptions`，模型 `Ming-3.0-asr-tiny`。
 
-没有单独测量端到端耗时或长录音上限。自动化测试覆盖配置合并、令牌读写与解析、坏配置恢复和设备检测短路。
+另外在一台没有 FFmpeg 的模拟环境里验证过：装包后自动改用随包二进制，并能枚举麦克风、录到真实声音。
+
+没有单独测量端到端耗时或长录音上限。自动化测试覆盖配置合并、令牌读写与解析、坏配置恢复、设备检测短路和 FFmpeg 选择。

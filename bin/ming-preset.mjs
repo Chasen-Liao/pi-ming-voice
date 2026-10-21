@@ -1,7 +1,10 @@
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync, existsSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
 
 export const MING_ENDPOINT = "https://api.ant-ling.com/v1/audio/transcriptions";
 export const MING_MODEL = "Ming-3.0-asr-tiny";
@@ -10,6 +13,69 @@ export const KEY_ENV_NAME = "ANTLING_API_KEY";
 export const DEFAULT_MAX_SECONDS = 28;
 /** 上传 + 端点转写共用一个超时，28 秒音频留足余量。 */
 export const DEFAULT_TIMEOUT_SECONDS = 90;
+
+/**
+ * FFmpeg builds shipped with this package. Each one is a platform package
+ * with os/cpu constraints and no install script, so npm installs exactly one
+ * of them and no postinstall ever has to run.
+ */
+const BUNDLED_FFMPEG_PACKAGES = {
+  "win32-x64": "@ffmpeg-installer/win32-x64",
+  "darwin-arm64": "@ffmpeg-installer/darwin-arm64",
+  "darwin-x64": "@ffmpeg-installer/darwin-x64",
+  "linux-x64": "@ffmpeg-installer/linux-x64",
+  "linux-arm64": "@ffmpeg-installer/linux-arm64",
+};
+
+/** Path to the FFmpeg binary that ships with this package, if it is installed. */
+export function bundledFfmpegPath() {
+  const pkg = BUNDLED_FFMPEG_PACKAGES[`${process.platform}-${process.arch}`];
+  if (!pkg) return undefined;
+  try {
+    const manifest = require.resolve(`${pkg}/package.json`);
+    return join(dirname(manifest), process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
+  } catch {
+    return undefined;
+  }
+}
+
+/** True when the given ffmpeg command can be executed. */
+export function ffmpegAvailable(ffmpegPath = "ffmpeg") {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(ffmpegPath, ["-version"], { stdio: ["ignore", "ignore", "ignore"], windowsHide: true });
+    } catch {
+      resolve(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      try { child.kill("SIGKILL"); } catch { /* already gone */ }
+      resolve(false);
+    }, 5_000);
+    child.on("error", () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve(code === 0);
+    });
+  });
+}
+
+/**
+ * Pick the FFmpeg to record with: an explicit path the user configured first,
+ * then the system ffmpeg, then the binary shipped with this package.
+ */
+export async function resolveFfmpegPath(configured) {
+  const value = typeof configured === "string" ? configured.trim() : "";
+  if (value && value !== "ffmpeg" && (value.includes("/") || value.includes("\\")) && existsSync(value)) {
+    return value;
+  }
+  if (await ffmpegAvailable()) return "ffmpeg";
+  return bundledFfmpegPath() ?? "ffmpeg";
+}
 
 export function defaultAgentDir() {
   return join(homedir(), ".pi", "agent");
@@ -183,6 +249,7 @@ export function mergeMingConfig(existing, keyPath, options = {}) {
       ...capture,
       maxSeconds,
       input: resolveInput(capture, base.capture.input, options.detectedInput),
+      ffmpegPath: options.ffmpegPath ?? capture.ffmpegPath ?? base.capture.ffmpegPath,
     },
     provider,
     cleanup: { ...(isObject(current.cleanup) ? current.cleanup : {}), enabled: false },
@@ -205,9 +272,7 @@ export async function ensureMingConfig(agentDir = defaultAgentDir(), options = {
     }
   }
   const capture = isObject(existing.capture) ? existing.capture : {};
-  const ffmpegPath = typeof capture.ffmpegPath === "string" && capture.ffmpegPath.trim()
-    ? capture.ffmpegPath
-    : "ffmpeg";
+  const ffmpegPath = await resolveFfmpegPath(capture.ffmpegPath);
   let detectedInput = options.detectedInput;
   // Only probe devices while the configured input is still the placeholder, so a
   // resolved device never costs another ffmpeg spawn on every Pi start.
@@ -215,7 +280,7 @@ export async function ensureMingConfig(agentDir = defaultAgentDir(), options = {
     const listDevices = options.listDevices ?? listWindowsAudioDevices;
     detectedInput = chooseWindowsInput(await listDevices(ffmpegPath));
   }
-  const next = mergeMingConfig(existing, paths.keyPath, { detectedInput });
+  const next = mergeMingConfig(existing, paths.keyPath, { detectedInput, ffmpegPath });
   writeFileSync(paths.configPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
   return paths;
 }
