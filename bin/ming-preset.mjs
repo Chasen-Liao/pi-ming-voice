@@ -8,6 +8,8 @@ const require = createRequire(import.meta.url);
 
 export const MING_ENDPOINT = "https://api.ant-ling.com/v1/audio/transcriptions";
 export const MING_MODEL = "Ming-3.0-asr-tiny";
+export const CONSOLE_URL = "https://chat.ant-ling.com/open";
+export const BILLING_URL = "https://feecenter.cloud.alipay.com/console/feeMain";
 export const KEY_ENV_NAME = "ANTLING_API_KEY";
 /** 百灵单段音频限制 30 秒，留 2 秒余量。 */
 export const DEFAULT_MAX_SECONDS = 28;
@@ -26,6 +28,18 @@ const BUNDLED_FFMPEG_PACKAGES = {
   "linux-x64": "@ffmpeg-installer/linux-x64",
   "linux-arm64": "@ffmpeg-installer/linux-arm64",
 };
+
+/** Open a page in the user's default browser. Best effort: never throws. */
+export function openPage(url) {
+  try {
+    const child = process.platform === "win32"
+      ? spawn("cmd", ["/c", "start", "", url], { detached: true, stdio: "ignore", windowsHide: true })
+      : spawn(process.platform === "darwin" ? "open" : "xdg-open", [url], { detached: true, stdio: "ignore" });
+    child.unref();
+  } catch {
+    /* the browser is optional; the URL is printed by the caller */
+  }
+}
 
 /** Path to the FFmpeg binary that ships with this package, if it is installed. */
 export function bundledFfmpegPath() {

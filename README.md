@@ -20,13 +20,29 @@ pi install <你的仓库路径>
 
 ## 填写令牌
 
+在 Pi 里直接填，不用切到别的终端：
+
+```
+/ming key
+```
+
+它会打开百灵控制台，并弹一个输入框，把刚创建的令牌粘进去就行。保存后立即生效，不用重启 Pi。
+
+| 命令 | 作用 |
+| --- | --- |
+| `/ming key` | 打开百灵控制台，在输入框里粘贴令牌并保存 |
+| `/ming status` | 看端点、设备、超时和令牌是否可用 |
+| `/ming open` | 只打开百灵控制台 |
+
+也可以在终端用 CLI（等价）：
+
 ```powershell
 npx ming-voice login
 ```
 
 这会打开 [百灵 API 控制台](https://chat.ant-ling.com/open)。登录后点「创建令牌」，再把令牌贴回终端。官方没有自动回传令牌的接口。充值在 [支付宝小程序云计费中心](https://feecenter.cloud.alipay.com/console/feeMain)。
 
-已经有令牌时运行 `npx ming-voice key`。输入不回显，只写到本机 `%USERPROFILE%\.pi\agent\antling-api-key`，不进仓库。`ANTLING_API_KEY` 环境变量仍然优先。
+已经有令牌时运行 `npx ming-voice key`（只贴令牌，不开浏览器）或在 Pi 里跑 `/ming key`。输入不回显，只写到本机 `%USERPROFILE%\.pi\agent\antling-api-key`，不进仓库。`ANTLING_API_KEY` 环境变量仍然优先。
 
 `npx ming-voice status` 是只读的：打印端点、设备、超时和令牌是否可解析，不会改配置。
 
@@ -40,6 +56,8 @@ npx ming-voice login
 | 录音中按 Enter | 识别后直接发送 |
 | Esc | 放弃本轮（录音中丢弃录音，转写中中止请求） |
 | `Alt+R` | 上游自带的 profile 切换菜单，本插件只有一个 profile |
+| `/ming key` | 在 Pi 里填写百灵令牌 |
+| `/ming status` | 查看端点、设备、超时和令牌状态 |
 | `/stt doctor` | 检查配置、令牌和 FFmpeg；不测网络，也不测麦克风是否真的能录到声音 |
 
 上游的界面文案目前只有英文和法文，插件里的提示是英文。

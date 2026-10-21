@@ -1,6 +1,6 @@
 {
   "name": "pi-ming-voice",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Pi voice input using Ant Ling Ming-3.0-asr-tiny",
   "type": "module",
   "license": "MIT",
