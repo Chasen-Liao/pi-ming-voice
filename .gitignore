@@ -10,13 +10,5 @@ coverage/
 *.tsbuildinfo
 .DS_Store
 Thumbs.db
-.voice-tmp/
-recordings/
-artifacts/local/
-*.wav
-*.mp3
-*.m4a
-*.webm
-*.zip
 *.tgz
 npm-auth-url.txt

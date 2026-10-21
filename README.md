@@ -8,10 +8,10 @@ Pi 语音输入。录音和回填使用 [pi-voice-stt](https://github.com/cgarro
 pi install npm:pi-ming-voice
 ```
 
-本机开发目录也可以：
+本机开发目录也可以（Pi 会把本地目录当扩展包加载，改代码即时生效）：
 
 ```powershell
-pi install D:\MyProjects\pi-ming-voice
+pi install <你的仓库路径>
 ```
 
 需要本机已有 FFmpeg，以及 Node ≥ 22.19。插件不会下载或安装它们。
@@ -58,6 +58,6 @@ Windows 上如果设备名仍是占位的 `audio=Microphone`，加载时会用 F
 
 ## 验证状态
 
-2026-10-20 在 Windows 11、Pi 1.3.0、FFmpeg 8.1.1 的交互式 Pi 里实测可用、识别准确；当时没有单独测量耗时或长录音上限。
+2026-10-21 在 Windows 11、Pi 1.3.0、FFmpeg 8.1.1 的交互式 Pi 里实测通过：`Ctrl+R` 录音 → 百灵识别 → 文字插入输入框，链路正常。识别请求已确认为发往 `https://api.ant-ling.com/v1/audio/transcriptions`，模型 `Ming-3.0-asr-tiny`。
 
-2026-10-21 扩展入口从 JavaScript 改为 TypeScript（修复合装后扩展加载失败的问题），该改动尚未在交互式 Pi 里重测。自动化测试覆盖配置合并、令牌读写与解析、坏配置恢复和设备检测短路。
+没有单独测量端到端耗时或长录音上限。自动化测试覆盖配置合并、令牌读写与解析、坏配置恢复和设备检测短路。
